@@ -1,0 +1,6 @@
+{
+  "issue_tracker": "github",
+  "docs_path": "docs",
+  "stack_layer": "llm-gateway",
+  "gateway_required": false
+}

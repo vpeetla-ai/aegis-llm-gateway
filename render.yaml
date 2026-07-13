@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: aegis-llm-gateway-api
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    envVars:
+      - key: GATEWAY_MODE
+        value: stub
+      - key: CONTROL_PLANE_MODE
+        value: demo
+      - key: SEMANTIC_CACHE_URL
+        sync: false
+      - key: AGENTFINOPS_URL
+        sync: false
