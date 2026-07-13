@@ -19,10 +19,13 @@
 | Tenant header | ✅ | `X-Tenant-Id` (logical isolation) |
 | Semantic cache client | ✅ | Optional `SEMANTIC_CACHE_URL` |
 | Stub-first mode | ✅ | Default; no paid keys |
-| BYOK live providers | ⬜ | Block 2+ |
-| FinOps meter hook | 🟡 | Client ready; wire when URL set |
-| Quotas RPM/TPM | ⬜ | Next block |
-| Streaming | ⬜ | Explicitly rejected in Block 1 |
+| FinOps pre-check + meter | ✅ | `GET /v1/budget` then `POST /v1/usage` when URL set |
+| Budget breach (strict) | ✅ | HTTP **402** if already breached |
+| FinOps down (strict) | ✅ | HTTP **503** |
+| Demo fail-open toggle | ✅ | `CONTROL_PLANE_MODE=demo` — documented in `/v1/posture` + `demo/` |
+| BYOK live providers | ⬜ | Later block |
+| Quotas RPM/TPM | ⬜ | Later block |
+| Streaming | ⬜ | Rejected for now |
 
 ## Quick start
 

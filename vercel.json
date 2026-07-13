@@ -1,0 +1,6 @@
+{
+  "framework": null,
+  "installCommand": "echo 'static demo'",
+  "buildCommand": "echo 'gateway posture demo'",
+  "outputDirectory": "demo"
+}

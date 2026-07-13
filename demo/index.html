@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Aegis LLM Gateway — Posture</title>
+    <style>
+      :root {
+        font-family: ui-sans-serif, system-ui, sans-serif;
+        color: #0f172a;
+        background: #f8fafc;
+      }
+      body { max-width: 720px; margin: 2rem auto; padding: 0 1rem; }
+      h1 { font-size: 1.5rem; }
+      .badge {
+        display: inline-block;
+        padding: 0.25rem 0.65rem;
+        border-radius: 999px;
+        font-size: 0.75rem;
+        font-weight: 600;
+        background: #fffbeb;
+        color: #b45309;
+        border: 1px solid #fcd34d;
+      }
+      .panel {
+        background: #fff;
+        border: 1px solid #e2e8f0;
+        border-radius: 12px;
+        padding: 1rem 1.25rem;
+        margin-top: 1rem;
+      }
+      code, pre { font-family: ui-monospace, monospace; font-size: 0.85rem; }
+      pre { background: #f1f5f9; padding: 0.75rem; border-radius: 8px; overflow: auto; }
+      a { color: #7c3aed; }
+    </style>
+  </head>
+  <body>
+    <p class="badge">Simulated · Block 2 posture docs</p>
+    <h1>Aegis LLM Gateway</h1>
+    <p>
+      Federated LLM plane — <strong>not</strong> AegisAI tool governance.
+      Stub-first completions; FinOps metering; semantic cache as a separate service.
+    </p>
+
+    <div class="panel">
+      <h2>Control plane posture</h2>
+      <p>
+        Architecture is <strong>fail-closed capable</strong>.
+        <code>CONTROL_PLANE_MODE=demo</code> is an explicit fail-open toggle for free-tier demos —
+        never silent.
+      </p>
+      <table>
+        <tr><th>Mode</th><th>Budget already breached</th><th>FinOps down</th></tr>
+        <tr><td><code>strict</code></td><td>HTTP 402</td><td>HTTP 503</td></tr>
+        <tr><td><code>demo</code></td><td>Allow + warn in <code>gateway.finops</code></td><td>Log + continue</td></tr>
+      </table>
+      <p>Live machine truth: <code>GET /v1/posture</code> and <code>GET /health</code>.</p>
+    </div>
+
+    <div class="panel">
+      <h2>Try locally</h2>
+      <pre>export CONTROL_PLANE_MODE=demo
+export AGENTFINOPS_URL=http://127.0.0.1:8000   # optional
+export SEMANTIC_CACHE_URL=http://127.0.0.1:8101 # optional
+uvicorn aegis_llm_gateway.api.main:app --port 8100</pre>
+      <p>
+        <a href="https://github.com/vpeetla-ai/aegis-llm-gateway">GitHub</a> ·
+        <a href="https://github.com/vpeetla-ai/ai-architecture-portfolio/blob/main/adr/ADR-028-federated-ai-control-plane-k8s-analogy.md">ADR-028</a> ·
+        <a href="https://github.com/vpeetla-ai/agent-finops">agent-finops</a>
+      </p>
+    </div>
+  </body>
+</html>
