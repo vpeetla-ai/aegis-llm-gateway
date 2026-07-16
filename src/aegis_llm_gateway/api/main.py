@@ -28,6 +28,7 @@ from aegis_llm_gateway.finops_client import (
 from aegis_llm_gateway.models import ChatCompletionRequest, ChatCompletionResponse
 from aegis_llm_gateway.provider_infer import infer_provider
 from aegis_llm_gateway.settings import settings
+from aegis_llm_gateway.byok_providers import ByokError, byok_complete, configured_providers
 from aegis_llm_gateway.stub_provider import stub_complete
 
 app = FastAPI(title="aegis-llm-gateway", version="0.3.0")
@@ -78,7 +79,7 @@ def posture() -> dict:
             "finops_unavailable": "HTTP 503" if strict else "log + continue",
             "budget_already_breached": "HTTP 402" if strict else "log + continue with warning",
             "cache_unavailable": "raise/503 path" if strict else "log + continue",
-            "byok_not_implemented": "HTTP 501" if strict else "fall back to stub",
+            "byok_failure": "HTTP 502" if strict else "fall back to stub with byok_fallback note",
             "routing_policy_deny": "HTTP 403 (always — selection stays app-owned)",
         },
         "honesty": (
@@ -102,6 +103,8 @@ def metrics() -> dict:
         "finops_errors": _STATS["finops_errors"],
         "routing_denies": _STATS["routing_denies"],
         "routing_decisions_recorded": _STATS["routing_decisions_recorded"],
+        "byok_completions": _STATS["byok_completions"],
+        "byok_fallbacks": _STATS["byok_fallbacks"],
         "control_plane_mode": settings.control_plane_mode,
     }
 
@@ -276,11 +279,37 @@ async def chat_completions(
         }
     else:
         _STATS["cache_misses"] += 1
-        if settings.gateway_mode != "stub":
-            if settings.control_plane_mode == "strict":
-                raise HTTPException(status_code=501, detail="BYOK providers not enabled yet")
-        content, usage = stub_complete(body.model, messages)
-        _STATS["stub_completions"] += 1
+        executed_provider = "stub"
+        byok_error: str | None = None
+        if settings.gateway_mode == "byok":
+            try:
+                content, usage, executed_provider = await byok_complete(
+                    settings=settings,
+                    provider=provider,
+                    model=body.model,
+                    messages=messages,
+                )
+                _STATS["byok_completions"] += 1
+            except ByokError as exc:
+                byok_error = f"{exc.provider}: {exc}"
+                if settings.control_plane_mode == "strict":
+                    raise HTTPException(
+                        status_code=502,
+                        detail={
+                            "error": "byok_provider_failed",
+                            "provider": exc.provider,
+                            "message": str(exc),
+                            "status": exc.status,
+                        },
+                    ) from exc
+                # demo: fall back to stub with honesty
+                content, usage = stub_complete(body.model, messages)
+                executed_provider = "stub"
+                _STATS["stub_completions"] += 1
+                _STATS["byok_fallbacks"] += 1
+        else:
+            content, usage = stub_complete(body.model, messages)
+            _STATS["stub_completions"] += 1
         _STATS["completions"] += 1
         if not bypass_cache:
             await cache_store(
@@ -312,7 +341,7 @@ async def chat_completions(
         gateway_meta = {
             "tenant_id": tenant_id,
             "cache_hit": False,
-            "provider": "stub",
+            "provider": executed_provider,
             "selected_provider": provider,
             "thesis_role": thesis.value if thesis else None,
             "agent_role": headers.agent_role,
@@ -327,6 +356,8 @@ async def chat_completions(
             "plane_role": "enforce_and_record",
             "cache_bypassed": bypass_cache,
         }
+        if byok_error:
+            gateway_meta["byok_fallback"] = byok_error
 
     cost = float((finops_meta.get("meter") or {}).get("cost_usd") or 0.0)
     decision = RoutingDecisionV2(

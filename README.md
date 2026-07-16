@@ -23,7 +23,7 @@
 | Budget breach (strict) | ✅ | HTTP **402** if already breached |
 | FinOps down (strict) | ✅ | HTTP **503** |
 | Demo fail-open toggle | ✅ | `CONTROL_PLANE_MODE=demo` — documented in `/v1/posture` + `demo/` |
-| BYOK live providers | ⬜ | Later block |
+| BYOK live providers | ✅ | OpenAI / Anthropic / Groq / Cerebras / Gemini / Ollama / vLLM |
 | Quotas RPM/TPM | ⬜ | Later block |
 | Streaming | ⬜ | Rejected for now |
 
