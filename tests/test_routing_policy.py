@@ -14,6 +14,8 @@ def setup_function() -> None:
     settings.agentfinops_url = None
     settings.gateway_mode = "stub"
     settings.control_plane_mode = "demo"
+    settings.tenant_enforcement = "off"
+    settings.require_principal = False
 
 
 def test_confidential_cloud_denied() -> None:

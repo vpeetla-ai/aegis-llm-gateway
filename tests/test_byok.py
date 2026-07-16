@@ -16,6 +16,8 @@ def setup_function() -> None:
     settings.agentfinops_url = None
     settings.gateway_mode = "byok"
     settings.control_plane_mode = "demo"
+    settings.tenant_enforcement = "off"
+    settings.require_principal = False
     settings.openai_api_key = "sk-test"
     settings.groq_api_key = None
     settings.anthropic_api_key = None
@@ -56,6 +58,8 @@ def test_byok_openai_success() -> None:
 @respx.mock
 def test_byok_demo_falls_back_to_stub() -> None:
     settings.control_plane_mode = "demo"
+    settings.tenant_enforcement = "off"
+    settings.require_principal = False
     respx.post("https://api.openai.com/v1/chat/completions").mock(
         return_value=Response(500, text="boom")
     )

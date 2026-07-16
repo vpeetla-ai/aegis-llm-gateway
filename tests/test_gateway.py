@@ -16,6 +16,8 @@ def setup_function() -> None:
     settings.agentfinops_api_key = None
     settings.gateway_mode = "stub"
     settings.control_plane_mode = "demo"
+    settings.tenant_enforcement = "off"
+    settings.require_principal = False
 
 
 def test_health() -> None:
@@ -27,6 +29,8 @@ def test_health() -> None:
 
 def test_posture_documents_demo_fail_open() -> None:
     settings.control_plane_mode = "demo"
+    settings.tenant_enforcement = "off"
+    settings.require_principal = False
     r = client.get("/v1/posture")
     assert r.status_code == 200
     body = r.json()
@@ -151,6 +155,8 @@ def test_strict_blocks_when_budget_breached() -> None:
 @respx.mock
 def test_demo_allows_when_budget_breached() -> None:
     settings.control_plane_mode = "demo"
+    settings.tenant_enforcement = "off"
+    settings.require_principal = False
     settings.agentfinops_url = "http://finops.test"
     respx.get("http://finops.test/v1/budget/tenant/broke").mock(
         return_value=Response(

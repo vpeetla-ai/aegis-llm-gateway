@@ -7,6 +7,16 @@ services:
     dockerContext: .
     healthCheckPath: /health
     envVars:
+      - key: GATEWAY_API_KEY
+        sync: false
+      - key: DEFAULT_TENANT_ID
+        value: demo
+      - key: REQUIRE_PRINCIPAL
+        value: false
+      - key: TENANT_ENFORCEMENT
+        value: warn
+      - key: ALLOWED_TENANT_IDS
+        sync: false
       - key: GATEWAY_MODE
         value: stub
       - key: CONTROL_PLANE_MODE

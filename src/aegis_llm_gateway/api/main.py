@@ -30,6 +30,7 @@ from aegis_llm_gateway.provider_infer import infer_provider
 from aegis_llm_gateway.settings import settings
 from aegis_llm_gateway.byok_providers import ByokError, byok_complete, configured_providers
 from aegis_llm_gateway.stub_provider import stub_complete
+from aegis_llm_gateway.tenants import check_tenant
 
 app = FastAPI(title="aegis-llm-gateway", version="0.3.0")
 app.add_middleware(
@@ -81,6 +82,9 @@ def posture() -> dict:
             "cache_unavailable": "raise/503 path" if strict else "log + continue",
             "byok_failure": "HTTP 502" if strict else "fall back to stub with byok_fallback note",
             "routing_policy_deny": "HTTP 403 (always — selection stays app-owned)",
+            "unknown_tenant": (
+                "HTTP 403 when TENANT_ENFORCEMENT=enforce or CONTROL_PLANE_MODE=strict"
+            ),
         },
         "honesty": (
             "Architecture is fail-closed capable; demo mode is an explicit toggle "
@@ -106,6 +110,22 @@ def metrics() -> dict:
         "byok_completions": _STATS["byok_completions"],
         "byok_fallbacks": _STATS["byok_fallbacks"],
         "control_plane_mode": settings.control_plane_mode,
+    }
+
+
+@app.get("/v1/ops/tenants")
+def list_tenants() -> dict:
+    return {
+        "service": "aegis-llm-gateway",
+        "tenant_enforcement": settings.tenant_enforcement,
+        "enforce_active": settings.tenant_enforce_enabled(),
+        "require_principal": settings.require_principal,
+        "allowed_tenants": sorted(settings.allowed_tenant_set()),
+        "default_tenant_id": settings.default_tenant_id,
+        "honesty": (
+            "Logical multi-tenant isolation via X-Tenant-Id (+ optional X-Principal-Id). "
+            "Not a hard multi-tenant SLA claim."
+        ),
     }
 
 
@@ -141,6 +161,7 @@ async def chat_completions(
     x_selected_provider: str | None = Header(default=None),
     x_model_tier: str | None = Header(default=None),
     x_cache_bypass: str | None = Header(default=None),
+    x_principal_id: str | None = Header(default=None),
 ) -> ChatCompletionResponse:
     _check_key(x_api_key)
     if body.stream:
@@ -156,9 +177,25 @@ async def chat_completions(
         x_generator_provider=x_generator_provider,
         x_routing_decision=x_routing_decision,
         x_identity_principal=x_identity_principal,
+        x_principal_id=x_principal_id,
         default_tenant=settings.default_tenant_id,
     )
     tenant_id = headers.tenant_id
+    principal_id = headers.principal_id or x_principal_id
+    tenant_deny = check_tenant(
+        settings, tenant_id=tenant_id, principal_id=principal_id
+    )
+    if tenant_deny is not None:
+        _STATS["tenant_denies"] += 1
+        raise HTTPException(
+            status_code=tenant_deny.http_status,
+            detail={
+                "error": "tenant_policy_deny",
+                "code": tenant_deny.code,
+                "message": tenant_deny.message,
+                "tenant_id": tenant_id,
+            },
+        )
     provider = infer_provider(
         body.model, x_selected_provider, gateway_mode=settings.gateway_mode
     )
@@ -262,6 +299,7 @@ async def chat_completions(
         }
         gateway_meta = {
             "tenant_id": tenant_id,
+            "principal_id": principal_id,
             "cache_hit": True,
             "provider": "cache",
             "selected_provider": provider,
@@ -340,6 +378,7 @@ async def chat_completions(
             ) from exc
         gateway_meta = {
             "tenant_id": tenant_id,
+            "principal_id": principal_id,
             "cache_hit": False,
             "provider": executed_provider,
             "selected_provider": provider,
