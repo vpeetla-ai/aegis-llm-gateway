@@ -8,6 +8,7 @@ from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from aegis_routing_contract import (
+    InvalidRoutingHeader,
     ModelTier,
     RoutingDecisionV2,
     RoutingFactors,
@@ -167,19 +168,25 @@ async def chat_completions(
     if body.stream:
         raise HTTPException(status_code=400, detail="streaming not supported yet")
 
-    headers = RoutingHeaders.from_http(
-        x_tenant_id=x_tenant_id,
-        x_agent_role=x_agent_role,
-        x_thesis_role=x_thesis_role,
-        x_data_class=x_data_class,
-        x_workflow_id=x_workflow_id,
-        x_step_id=x_step_id,
-        x_generator_provider=x_generator_provider,
-        x_routing_decision=x_routing_decision,
-        x_identity_principal=x_identity_principal,
-        x_principal_id=x_principal_id,
-        default_tenant=settings.default_tenant_id,
-    )
+    try:
+        headers = RoutingHeaders.from_http(
+            x_tenant_id=x_tenant_id,
+            x_agent_role=x_agent_role,
+            x_thesis_role=x_thesis_role,
+            x_data_class=x_data_class,
+            x_workflow_id=x_workflow_id,
+            x_step_id=x_step_id,
+            x_generator_provider=x_generator_provider,
+            x_routing_decision=x_routing_decision,
+            x_identity_principal=x_identity_principal,
+            x_principal_id=x_principal_id,
+            default_tenant=settings.default_tenant_id,
+        )
+    except InvalidRoutingHeader as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": "invalid_routing_header", "message": str(exc)},
+        ) from exc
     tenant_id = headers.tenant_id
     principal_id = headers.principal_id or x_principal_id
     tenant_deny = check_tenant(
