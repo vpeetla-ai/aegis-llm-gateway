@@ -67,3 +67,9 @@ Apps **select** models. This gateway **enforces** policy and **records** `Routin
 - Audit: `GET /v1/ops/routing-decisions`
 
 Install sibling contract: `pip install -e ../aegis-routing-contract`
+
+## Live BYOK on Render
+
+1. Set `GATEWAY_MODE=byok` (dashboard override; repo default remains `stub` for free-tier safety).
+2. Sync at least one free/BYOK key: `GROQ_API_KEY`, `GOOGLE_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `CEREBRAS_API_KEY`.
+3. Consumers send `X-Selected-Provider` + model; apps still select (ADR-029).
