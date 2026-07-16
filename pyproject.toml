@@ -10,6 +10,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 authors = [{ name = "Venkata Peetla" }]
 dependencies = [
+  "aegis-routing-contract @ git+https://github.com/vpeetla-ai/aegis-routing-contract.git@master",
   "fastapi>=0.115.0",
   "uvicorn[standard]>=0.30.0",
   "httpx>=0.27.0",

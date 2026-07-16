@@ -57,3 +57,13 @@ Staff+ prep crosswalk — [playbook](https://github.com/vpeetla-ai/ai-architect-
 - Cache: https://github.com/vpeetla-ai/aegis-semantic-cache
 - FinOps: https://github.com/vpeetla-ai/agent-finops
 - AegisAI: https://github.com/vpeetla-ai/aegisai-enterprise-agent-platform
+
+## Role-aware enforce + record (ADR-029)
+
+Apps **select** models. This gateway **enforces** policy and **records** `RoutingDecision` via `aegis-routing-contract`:
+
+- Headers: `X-Agent-Role`, `X-Thesis-Role`, `X-Data-Class`, `X-Selected-Provider`, `X-Generator-Provider`, …
+- Denies: confidential→cloud, verifier provider == generator provider
+- Audit: `GET /v1/ops/routing-decisions`
+
+Install sibling contract: `pip install -e ../aegis-routing-contract`

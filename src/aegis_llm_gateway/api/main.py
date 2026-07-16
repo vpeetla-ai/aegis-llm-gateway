@@ -7,7 +7,18 @@ from collections import Counter
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
+from aegis_routing_contract import (
+    ModelTier,
+    RoutingDecisionV2,
+    RoutingFactors,
+    RoutingHeaders,
+    enforce_routing_policy,
+    map_agent_to_thesis_role,
+    tier_for_bucket,
+)
+
 from aegis_llm_gateway.cache_client import cache_lookup, cache_store
+from aegis_llm_gateway.decisions import clear_decisions, list_decisions, record_decision
 from aegis_llm_gateway.finops_client import (
     BudgetBreachedError,
     FinOpsUnavailableError,
@@ -15,10 +26,11 @@ from aegis_llm_gateway.finops_client import (
     meter_usage,
 )
 from aegis_llm_gateway.models import ChatCompletionRequest, ChatCompletionResponse
+from aegis_llm_gateway.provider_infer import infer_provider
 from aegis_llm_gateway.settings import settings
 from aegis_llm_gateway.stub_provider import stub_complete
 
-app = FastAPI(title="aegis-llm-gateway", version="0.2.0")
+app = FastAPI(title="aegis-llm-gateway", version="0.3.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -43,6 +55,9 @@ def health() -> dict:
         "control_plane_mode": settings.control_plane_mode,
         "cache_configured": bool(settings.semantic_cache_url),
         "finops_configured": bool(settings.agentfinops_url),
+        "routing_contract": "aegis-routing-contract",
+        "selection_sor": "app",
+        "plane_role": "enforce_and_record",
         "posture": (
             "fail-closed"
             if settings.control_plane_mode == "strict"
@@ -64,10 +79,12 @@ def posture() -> dict:
             "budget_already_breached": "HTTP 402" if strict else "log + continue with warning",
             "cache_unavailable": "raise/503 path" if strict else "log + continue",
             "byok_not_implemented": "HTTP 501" if strict else "fall back to stub",
+            "routing_policy_deny": "HTTP 403 (always — selection stays app-owned)",
         },
         "honesty": (
             "Architecture is fail-closed capable; demo mode is an explicit toggle "
-            "for free-tier portfolio demos — never silent."
+            "for free-tier portfolio demos — never silent. "
+            "Gateway enforces+records RoutingDecision; apps select models (ADR-029)."
         ),
     }
 
@@ -83,7 +100,25 @@ def metrics() -> dict:
         "finops_meters": _STATS["finops_meters"],
         "finops_breaches_blocked": _STATS["finops_breaches_blocked"],
         "finops_errors": _STATS["finops_errors"],
+        "routing_denies": _STATS["routing_denies"],
+        "routing_decisions_recorded": _STATS["routing_decisions_recorded"],
         "control_plane_mode": settings.control_plane_mode,
+    }
+
+
+@app.get("/v1/ops/routing-decisions")
+def routing_decisions(
+    tenant_id: str | None = None,
+    workflow_id: str | None = None,
+    limit: int = 50,
+) -> dict:
+    return {
+        "service": "aegis-llm-gateway",
+        "selection_sor": "app",
+        "plane_role": "enforce_and_record",
+        "decisions": list_decisions(
+            tenant_id=tenant_id, workflow_id=workflow_id, limit=limit
+        ),
     }
 
 
@@ -92,15 +127,94 @@ async def chat_completions(
     body: ChatCompletionRequest,
     x_api_key: str | None = Header(default=None),
     x_tenant_id: str | None = Header(default=None),
+    x_agent_role: str | None = Header(default=None),
+    x_thesis_role: str | None = Header(default=None),
+    x_data_class: str | None = Header(default=None),
+    x_workflow_id: str | None = Header(default=None),
+    x_step_id: str | None = Header(default=None),
+    x_generator_provider: str | None = Header(default=None),
+    x_routing_decision: str | None = Header(default=None),
+    x_identity_principal: str | None = Header(default=None),
+    x_selected_provider: str | None = Header(default=None),
+    x_model_tier: str | None = Header(default=None),
+    x_cache_bypass: str | None = Header(default=None),
 ) -> ChatCompletionResponse:
     _check_key(x_api_key)
     if body.stream:
         raise HTTPException(status_code=400, detail="streaming not supported yet")
 
-    tenant_id = (x_tenant_id or settings.default_tenant_id).strip() or settings.default_tenant_id
+    headers = RoutingHeaders.from_http(
+        x_tenant_id=x_tenant_id,
+        x_agent_role=x_agent_role,
+        x_thesis_role=x_thesis_role,
+        x_data_class=x_data_class,
+        x_workflow_id=x_workflow_id,
+        x_step_id=x_step_id,
+        x_generator_provider=x_generator_provider,
+        x_routing_decision=x_routing_decision,
+        x_identity_principal=x_identity_principal,
+        default_tenant=settings.default_tenant_id,
+    )
+    tenant_id = headers.tenant_id
+    provider = infer_provider(
+        body.model, x_selected_provider, gateway_mode=settings.gateway_mode
+    )
+    tier = tier_for_bucket(x_model_tier) if x_model_tier else (
+        ModelTier.LOCAL_PRIVATE
+        if provider in {"ollama", "vllm", "local"}
+        else ModelTier.FAST
+    )
+    thesis = headers.thesis_role or map_agent_to_thesis_role(
+        tenant_id, headers.agent_role
+    )
+    deny = enforce_routing_policy(
+        headers,
+        provider=provider,
+        model_id=body.model,
+        tier=tier,
+        consumer=tenant_id,
+        bypass_cache_requested=(x_cache_bypass or "").lower() in {"1", "true", "yes"},
+    )
+    if deny is not None:
+        _STATS["routing_denies"] += 1
+        decision = RoutingDecisionV2(
+            tenant_id=tenant_id,
+            workflow_id=headers.workflow_id,
+            step_id=headers.step_id,
+            factors=RoutingFactors(
+                thesis_role=thesis,
+                agent_role=headers.agent_role,
+                data_class=headers.data_class,
+                notes=[deny.message],
+            ),
+            tier=tier,
+            provider=provider,
+            model_id=body.model,
+            reason="policy_deny",
+            policy_allowed=False,
+            policy_deny_code=deny.code,
+            selected_by="app",
+        )
+        record_decision(decision.model_dump(mode="json"))
+        _STATS["routing_decisions_recorded"] += 1
+        raise HTTPException(
+            status_code=deny.http_status,
+            detail={
+                "error": "routing_policy_deny",
+                "code": deny.code,
+                "message": deny.message,
+                "decision_id": decision.decision_id,
+                "selection_sor": "app",
+                "plane_role": "enforce_and_record",
+            },
+        )
+
     messages = [m.model_dump() for m in body.messages]
     t0 = time.perf_counter()
     finops_meta: dict = {"configured": bool(settings.agentfinops_url)}
+    bypass_cache = (x_cache_bypass or "").lower() in {"1", "true", "yes"}
+    if thesis and thesis.value == "verifier":
+        bypass_cache = True
 
     try:
         budget_status = await assert_budget_allows(tenant_id)
@@ -133,7 +247,7 @@ async def chat_completions(
             },
         ) from exc
 
-    cached = await cache_lookup(tenant_id, body.model, messages)
+    cached = None if bypass_cache else await cache_lookup(tenant_id, body.model, messages)
     if cached and "content" in cached:
         _STATS["completions"] += 1
         _STATS["cache_hits"] += 1
@@ -147,10 +261,18 @@ async def chat_completions(
             "tenant_id": tenant_id,
             "cache_hit": True,
             "provider": "cache",
+            "selected_provider": provider,
+            "thesis_role": thesis.value if thesis else None,
+            "agent_role": headers.agent_role,
+            "data_class": headers.data_class.value,
+            "tier": tier.value,
+            "workflow_id": headers.workflow_id,
             "latency_ms": int((time.perf_counter() - t0) * 1000),
             "mode": settings.gateway_mode,
             "control_plane_mode": settings.control_plane_mode,
             "finops": finops_meta,
+            "selection_sor": "app",
+            "plane_role": "enforce_and_record",
         }
     else:
         _STATS["cache_misses"] += 1
@@ -160,12 +282,13 @@ async def chat_completions(
         content, usage = stub_complete(body.model, messages)
         _STATS["stub_completions"] += 1
         _STATS["completions"] += 1
-        await cache_store(
-            tenant_id,
-            body.model,
-            messages,
-            {"content": content, "usage": usage},
-        )
+        if not bypass_cache:
+            await cache_store(
+                tenant_id,
+                body.model,
+                messages,
+                {"content": content, "usage": usage},
+            )
         try:
             meter = await meter_usage(tenant_id=tenant_id, model=body.model, usage=usage)
             if meter is not None:
@@ -190,11 +313,45 @@ async def chat_completions(
             "tenant_id": tenant_id,
             "cache_hit": False,
             "provider": "stub",
+            "selected_provider": provider,
+            "thesis_role": thesis.value if thesis else None,
+            "agent_role": headers.agent_role,
+            "data_class": headers.data_class.value,
+            "tier": tier.value,
+            "workflow_id": headers.workflow_id,
             "latency_ms": int((time.perf_counter() - t0) * 1000),
             "mode": settings.gateway_mode,
             "control_plane_mode": settings.control_plane_mode,
             "finops": finops_meta,
+            "selection_sor": "app",
+            "plane_role": "enforce_and_record",
+            "cache_bypassed": bypass_cache,
         }
+
+    cost = float((finops_meta.get("meter") or {}).get("cost_usd") or 0.0)
+    decision = RoutingDecisionV2(
+        tenant_id=tenant_id,
+        workflow_id=headers.workflow_id,
+        step_id=headers.step_id,
+        factors=RoutingFactors(
+            thesis_role=thesis,
+            agent_role=headers.agent_role,
+            data_class=headers.data_class,
+            notes=["app_selected", "gateway_enforced"],
+        ),
+        tier=tier,
+        provider=provider,
+        model_id=body.model,
+        reason="app_selected_gateway_allowed",
+        cost_usd=cost,
+        latency_ms=float(gateway_meta.get("latency_ms") or 0),
+        cache_bypassed=bypass_cache or bool(gateway_meta.get("cache_hit") is False and thesis and thesis.value == "verifier"),
+        policy_allowed=True,
+        selected_by="app",
+    )
+    record_decision(decision.model_dump(mode="json"))
+    _STATS["routing_decisions_recorded"] += 1
+    gateway_meta["decision_id"] = decision.decision_id
 
     return ChatCompletionResponse(
         id=f"chatcmpl-{uuid.uuid4().hex[:12]}",
@@ -209,3 +366,7 @@ async def chat_completions(
         usage=usage,
         gateway=gateway_meta,
     )
+
+
+# test helper export
+__all__ = ["app", "_STATS", "clear_decisions"]
