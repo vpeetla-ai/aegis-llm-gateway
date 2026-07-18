@@ -12,7 +12,9 @@
 > **Not AegisAI.** Tool governance stays in [aegisai-enterprise-agent-platform](https://github.com/vpeetla-ai/aegisai-enterprise-agent-platform). This repo owns model HTTP only.  
 > ADRs: [ADR-028](https://github.com/vpeetla-ai/ai-architecture-portfolio/blob/main/adr/ADR-028-federated-ai-control-plane-k8s-analogy.md) · [ADR-029](https://github.com/vpeetla-ai/ai-architecture-portfolio/blob/main/adr/ADR-029-app-owned-role-aware-routing-contract.md) · Plan: [LLM_GATEWAY_PLANE.md](https://github.com/vpeetla-ai/ai-architecture-portfolio/blob/main/docs/plans/LLM_GATEWAY_PLANE.md)
 
-**Live:** [aegis-llm-gateway-api.onrender.com](https://aegis-llm-gateway-api.onrender.com/health) · default `GATEWAY_MODE=stub` (BYOK is an explicit override)
+**Live:** [aegis-llm-gateway-api.onrender.com](https://aegis-llm-gateway-api.onrender.com/health)
+
+> **Default is not production.** Render ships `GATEWAY_MODE=stub` + `CONTROL_PLANE_MODE=demo` (fail-open). Machine truth: [`GET /v1/posture`](https://aegis-llm-gateway-api.onrender.com/v1/posture). BYOK / strict are explicit overrides — never silent.
 
 ## Implementation status (honest)
 
